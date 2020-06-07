@@ -1,0 +1,88 @@
+import boto3
+import collections
+import operator
+import time
+import datetime
+import os
+import botocore  
+import re  
+import logging
+from sys import argv
+import json
+from botocore.exceptions import ClientError
+#from botocore.exceptions import UnboundLocalError
+
+
+def copy_ebs_snapshot(SOURCE_REGION, DESTINATION_REGION, AWS_TARGET_ACCOUNT):
+    source_client = boto3.client('ec2', region_name=os.environ['SOURCE_REGION'])
+    destination_client = boto3.client('ec2', region_name=os.environ['DESTINATION_REGION'])
+    snapshots_jira = source_client.describe_snapshots(Filters=[{"Name": "status", "Values": ["completed"]}, {'Name': 'tag:Name', 'Values': ['jira-home']},
+                                                          {'Name': 'tag:DisasterRecovery', 'Values': ['True']}], OwnerIds=['self'])
+    snapshots_confluence = source_client.describe_snapshots(Filters=[{"Name": "status", "Values": ["completed"]}, {'Name': 'tag:Name', 'Values': ['confluence-home']},
+                                                          {'Name': 'tag:DisasterRecovery', 'Values': ['True']}], OwnerIds=['self'])
+    snapshot_instances_jira = sorted([(s['SnapshotId'], s['StartTime']) for s in  snapshots_jira['Snapshots']], key=lambda k: k[1])
+    snapshot_instances_confluence = sorted([(s['SnapshotId'], s['StartTime']) for s in snapshots_confluence['Snapshots']], key=lambda k: k[1])
+    print(snapshot_instances_jira)
+    print(snapshot_instances_confluence)
+    try:
+     snap1 = snapshot_instances_jira[-1][0]
+    except IndexError:
+         snap1 = 'null'
+    try:
+     snap2 =snapshot_instances_confluence[-1][0]
+    except IndexError:
+         snap2 = 'null'
+    print('Latest Jira and Confluence snapshots are:' + snap1 + ' ' + ' ' + snap2 + ' ')
+
+    # Copy the latest jira and confluence snapshots
+    try: response = destination_client.copy_snapshot(SourceSnapshotId=snap1, SourceRegion=os.environ['SOURCE_REGION'], Description='Jira-home-snapshot')
+    except ClientError as e:
+         if e.response['Error']['Code'] == 'InvalidParameterValue':
+             print("There is no first snapshot")
+         else:
+             print("Unexpected error: %s" % e)
+    print('Copied Snapshot ID to Virginia: ' '   of snapshot:  ' + snap1)
+    time.sleep(30)
+    
+
+    try: response2 = destination_client.copy_snapshot(SourceSnapshotId=snap2, SourceRegion=os.environ['SOURCE_REGION'], Description='Confluence-home-snapshot')
+    except ClientError as e:
+         if e.response['Error']['Code'] == 'InvalidParameterValue':
+             print("There is no second snapshot")
+         else:
+             print("Unexpected error: %s" % e)
+ #   print('Copied Snapshot ID to Virginia is: ' + response2['SnapshotId'] + '   of snapshot:  ' + snap2)
+ #    print('Copied Snapshot ID to Virginia is: ' + response['SnapshotId'] + '   of snapshot:  ' + snap2)
+    time.sleep(30)
+    print('Snapshots are available')
+    tagging = destination_client.create_tags(Resources=[response['SnapshotId'],],Tags=[{'Key': 'Name', 'Value': 'jira-home'}])
+    tagging2 = destination_client.create_tags(Resources=[response2['SnapshotId'],],Tags=[{'Key': 'Name', 'Value': 'confluence-home'}])
+    print('tagging is added')
+    #sharing snapshots with sandbox account
+    try: destination_client.modify_snapshot_attribute(Attribute='createVolumePermission',OperationType='add',SnapshotId=response['SnapshotId'],UserIds=[os.environ['AWS_TARGET_ACCOUNT']])
+    except UnboundLocalError:
+        pass
+#        else:
+#             print("Unexpected error: %s" % e)
+    print("Jira snapshot is shared")
+    try: destination_client.modify_snapshot_attribute(Attribute='createVolumePermission',OperationType='add',SnapshotId=response2['SnapshotId'],UserIds=[os.environ['AWS_TARGET_ACCOUNT']])
+    except UnboundLocalError:
+        pass   
+    print("Confluence snapshot is shared")
+    # shared_jira = destination_client.describe_snapshots(Filters=[{"Name": "description", "Values": ["completed"]}],OwnerIds=[os.environ['AWS_TARGET_ACCOUNT']])
+    # shared_instances_jira = sorted([(s['SnapshotId'], s['StartTime']) for s in  shared_jira['Snapshots']], key=lambda k: k[1])
+    # snap3 =shared_instances_jira[-1][0]
+    
+    # print(snap3)
+    # tag = destination_client.create_tags(Resources=[snap3['SnapshotId'],],Tags=[{'Key': 'Name', 'Value': 'jira-home'}])
+    # print("Shared jira snapshot is tagged")
+    
+def lambda_handler(event, context):
+    SOURCE_REGION = os.environ['SOURCE_REGION'],
+    DESTINATION_REGION = os.environ['DESTINATION_REGION'],
+#    AWS_ACCOUNT = os.environ['AWS_ACCOUNT'],
+    AWS_TARGET_ACCOUNT = os.environ['AWS_TARGET_ACCOUNT'],
+    copy_ebs_snapshot(SOURCE_REGION, DESTINATION_REGION, AWS_TARGET_ACCOUNT)
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
