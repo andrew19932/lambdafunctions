@@ -1,0 +1,93 @@
+import boto3
+import collections
+import operator
+import time
+import datetime
+import os
+import json
+from datetime import datetime
+from datetime import datetime,timedelta, tzinfo
+
+class Zone(tzinfo):
+    def __init__(self,offset,isdst,name):
+        self.offset = offset
+        self.isdst = isdst
+        self.name = name
+    def utcoffset(self, dt):
+        return timedelta(hours=self.offset) + self.dst(dt)
+    def dst(self, dt):
+        return timedelta(hours=1) if self.isdst else timedelta(0)
+    def tzname(self,dt):
+        return self.name
+UTC = Zone(10,False,'UTC')
+# Setting retention period:
+retentionDate_bitbucket_Ireland = datetime.now(UTC) - timedelta(days=5)
+retentionDate_bitbucket_Virginia = datetime.now(UTC) - timedelta(days=365)
+
+def bitbucket_cleanup():
+    #cleanup bibucket in Ireland
+    source_client = boto3.client('ec2', region_name=os.environ['SOURCE_REGION'])
+    snapshots = source_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "tag:Name", "Values": ["*itbucket*"]}])
+    #print (snapshots)
+    print('Deleting bitbucket Snapshots in Ireland older than %s' % retentionDate_bitbucket_Ireland)
+    for i in snapshots['Snapshots']:
+        if (i['StartTime'] < retentionDate_bitbucket_Ireland):
+            print ('Deleting snapshot:   %s' % i['SnapshotId'])
+            source_client.delete_snapshot(SnapshotId=i['SnapshotId']
+        )
+    # Cleanup bibucket in Virginia
+    destination_client = boto3.client('ec2', region_name=os.environ['DESTINATION_REGION'])
+    snapshots_check_by_description = destination_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "description", "Values": ["*itbucket-*"]}])
+    snapshots_check_by_nametag = destination_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "tag:Name", "Values": ["*itbucket*"]}])
+  # print (snapshots_check_by_description)
+  # print (snapshots_check_by_nametag)
+    for s in snapshots_check_by_description['Snapshots']:
+        if (s['StartTime'] < retentionDate_bitbucket_Virginia):
+            print ('Deleting snapshot:   %s' % s['SnapshotId'])
+            destination_client.delete_snapshot(SnapshotId=s['SnapshotId']
+        )
+    for m in snapshots_check_by_nametag['Snapshots']:
+        if (m['StartTime'] < retentionDate_bitbucket_Virginia):
+            print ('Deleting snapshot:   %s' % m['SnapshotId'])
+            destination_client.delete_snapshot(SnapshotId=m['SnapshotId']
+        )
+def jira_confluence_cleanup():
+    #cleanup jira in Ireland
+    source_client = boto3.client('ec2', region_name=os.environ['SOURCE_REGION'])
+    snapshots_jira = source_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "tag:Name", "Values": ["jira*"]}])
+    #print (snapshots)
+    print('Deleting Jira Snapshots in Ireland older than %s' % retentionDate_bitbucket_Ireland)
+    for s in snapshots_jira['Snapshots']:
+        if (s['StartTime'] < retentionDate_bitbucket_Ireland):
+            print ('Deleting snapshot:   %s' % s['SnapshotId'])
+            source_client.delete_snapshot(SnapshotId=s['SnapshotId']
+        )
+    snapshots_conf = source_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "tag:Name", "Values": ["confluence-home"]}])
+    #print (snapshots)
+    print('Deleting Jira Snapshots in Ireland older than %s' % retentionDate_bitbucket_Ireland)
+    for c in snapshots_conf['Snapshots']:
+        if (c['StartTime'] < retentionDate_bitbucket_Ireland):
+            print ('Deleting snapshot:   %s' % c['SnapshotId'])
+            source_client.delete_snapshot(SnapshotId=c['SnapshotId']
+        )
+    destination_client = boto3.client('ec2', region_name=os.environ['DESTINATION_REGION'])
+    snapshots_jc_by_description = destination_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "description", "Values": ["*home*"]}])
+    snapshots_jc_by_nametag = destination_client.describe_snapshots(OwnerIds=['self'], Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "tag:Name", "Values": ["*home"]}])
+    for a in snapshots_jc_by_description['Snapshots']:
+        if (a['StartTime'] < retentionDate_bitbucket_Virginia):
+            print ('Deleting snapshot:   %s' % a['SnapshotId'])
+            destination_client.delete_snapshot(SnapshotId=a['SnapshotId']
+        )
+    for m in snapshots_jc_by_nametag['Snapshots']:
+        if (m['StartTime'] < retentionDate_bitbucket_Virginia):
+            print ('Deleting snapshot:   %s' % m['SnapshotId'])
+            destination_client.delete_snapshot(SnapshotId=m['SnapshotId']
+        )
+
+def lambda_handler(event, context):
+    bitbucket_cleanup(),
+    jira_confluence_cleanup()
+
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
