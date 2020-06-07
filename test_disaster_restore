@@ -1,0 +1,153 @@
+import boto3
+import collections
+import operator
+import time
+import datetime
+import sys
+from sys import argv
+import json
+import botocore
+import os
+
+def database_from_snapshot(SOURCE_REGION, DATABASES):
+     client = boto3.client('rds', os.environ['SOURCE_REGION'])
+     remote_client = boto3.client('rds', os.environ['SOURCE_REGION'])
+     response = client.describe_db_snapshots(SnapshotType='shared', IncludeShared=True, IncludePublic=False)
+ #   print(response)
+     snapshots_per_project = {}
+
+     for snapshot in response['DBSnapshots']:
+         if snapshot['DBInstanceIdentifier']  not in os.environ['DATABASES'] or snapshot['Status'] != 'available':
+             continue
+
+         if snapshot['DBInstanceIdentifier']  not in snapshots_per_project.keys():
+             snapshots_per_project[snapshot['DBInstanceIdentifier']] = {}
+
+         snapshots_per_project[snapshot['DBInstanceIdentifier']][snapshot['DBSnapshotIdentifier']] = snapshot[
+             'SnapshotCreateTime']
+
+     for project in snapshots_per_project:
+         sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=True)
+
+         copy_name = project + "-" + sorted_list[0][1].strftime("%Y%m%d")
+         print('DB snapshot which will be restored - ' + copy_name)
+
+     remote_client.describe_db_snapshots(SnapshotType='shared', IncludeShared=True)
+     copy_to_sandbox = remote_client.copy_db_snapshot(
+         SourceDBSnapshotIdentifier=snapshot['DBSnapshotIdentifier'],
+         KmsKeyId=os.environ['KMS_KEY_ID'],
+         TargetDBSnapshotIdentifier=copy_name
+     )
+ #   print(copy_to_sandbox['DBSnapshotIdentifier'])
+     time.sleep(410)
+     print('copied to local account')
+ #    print(copy_to_sandbox)
+     
+     remote_client.restore_db_instance_from_db_snapshot(DBInstanceIdentifier='ireland-prod-bitbucket-dc', DBSnapshotIdentifier=copy_name)
+     print('DB from local snapshot is created')
+
+
+def volume_from_snapshot(SOURCE_REGION, AWS_OWNER_ACCOUNT, AZ):
+    client = boto3.client('ec2', os.environ['SOURCE_REGION'])
+
+    source_client = boto3.client('ec2', region_name=os.environ['SOURCE_REGION'])
+    snapshots = source_client.describe_snapshots(OwnerIds=[os.environ['AWS_ACCOUNT']],
+                                                 Filters=[{"Name": "status", "Values": ["completed"]}, {"Name": "description", "Values": ["copied snapshot of nfs instance from Ireland"]}])
+    snapshots_sorted = sorted([(s['SnapshotId'], s['StartTime']) for s in snapshots['Snapshots']], key=lambda k: k[1])
+    latest_snapshot = snapshots_sorted[-1][0]
+
+    print('Latest shared snapshot ID is ' + latest_snapshot)
+
+    volume = client.create_volume(
+        SnapshotId=latest_snapshot,
+        Encrypted=True,
+        KmsKeyId=os.environ['KMS_KEY_ID'],
+        AvailabilityZone=os.environ['AZ']
+    )
+
+    global VolID
+    VolID = volume["VolumeId"]
+
+    print('Created VolumeID is ' + VolID)
+    time.sleep(150)
+
+def create_instance_and_attach_volume(SOURCE_REGION, EC2InstanceType, AMI, EC2KeyName, Subnet, VPC):
+    client = boto3.client('ec2', region_name=os.environ["SOURCE_REGION"])
+
+    pubSecGrps = client.create_security_group(DryRun=False,
+                                              GroupName='pubSecGrps',
+                                              Description='Public_Security_Group',
+                                              VpcId=os.environ['VPC']
+                                              )
+
+    print('Security group is created ' + pubSecGrps['GroupId'])
+
+    client.authorize_security_group_ingress(GroupId=pubSecGrps['GroupId'],
+                                            IpProtocol='tcp',
+                                            FromPort=80,
+                                            ToPort=80,
+                                            CidrIp='0.0.0.0/0'
+                                            )
+    client.authorize_security_group_ingress(GroupId=pubSecGrps['GroupId'],
+                                            IpProtocol='tcp',
+                                            FromPort=22,
+                                            ToPort=22,
+                                            CidrIp='0.0.0.0/0'
+                                            )
+    client.authorize_security_group_ingress(GroupId=pubSecGrps['GroupId'],
+                                            IpProtocol='tcp',
+                                            FromPort=9100,
+                                            ToPort=9100,
+                                            CidrIp='0.0.0.0/0'
+                                            )
+
+    init_script = """#!/bin/bash
+
+    sudo mkdir /datadrive
+    sudo mount /dev/xvdf /datadrive
+    echo /dev/xvdf /datadrive ext4 defaults,nofail 0 2 >> /etc/fstab"""
+
+    instances = client.run_instances(ImageId=os.environ['AMI'],
+                                     MinCount=1,
+                                     MaxCount=1,
+                                     UserData=init_script,
+                                     KeyName=os.environ['EC2KeyName'],
+                                     InstanceType=os.environ['EC2InstanceType'],
+                                     NetworkInterfaces=[
+                                         {
+                                             'SubnetId': os.environ['Subnet'],
+                                             'Groups': [pubSecGrps['GroupId']],
+                                             'DeviceIndex': 0,
+                                             'DeleteOnTermination': True,
+                                             'AssociatePublicIpAddress': True,
+                                         }
+                                     ]
+                                     )
+
+    instance_id = instances['Instances'][0]['InstanceId']
+
+    print('Created InstanceID is ' + instance_id)
+
+    time.sleep(50)
+
+    responce = client.attach_volume(VolumeId=VolID, InstanceId=instance_id, Device='/dev/xvdf')
+
+    print('Attach Volume ' + VolID + ' to Instance ' + instance_id)
+
+def lambda_handler(event, context):
+    DATABASES = os.environ['DATABASES'],
+    SOURCE_REGION = os.environ['SOURCE_REGION'],
+    AWS_ACCOUNT = os.environ['AWS_ACCOUNT'],
+    AWS_OWNER_ACCOUNT = os.environ['AWS_OWNER_ACCOUNT'],
+    EC2InstanceType = os.environ['EC2InstanceType'],
+    VPC = os.environ['VPC'],
+    AZ = os.environ['AZ'],
+    AMI = os.environ['AMI'],
+    EC2KeyName = os.environ['EC2KeyName'],
+    Subnet = os.environ['Subnet'],
+    database_from_snapshot(SOURCE_REGION, DATABASES),
+    volume_from_snapshot(SOURCE_REGION, AWS_OWNER_ACCOUNT, AZ),
+    create_instance_and_attach_volume(SOURCE_REGION, EC2InstanceType, AMI, EC2KeyName, Subnet, VPC)
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
