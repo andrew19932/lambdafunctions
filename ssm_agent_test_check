@@ -1,0 +1,40 @@
+
+import json
+import boto3
+import logging
+import os
+import datetime
+
+def send_message_to_slack(id):
+    from urllib import request, parse
+    import json
+    text = "(devops) SSM agent is not installed on instance (instanceID): " + id 
+    post = {"text": "{0}".format(text)}
+    try:
+        json_data = json.dumps(post)
+        req = request.Request(os.environ['HOOK_URL'],
+                              data=json_data.encode('ascii'),
+                              headers={'Content-Type': 'application/json'}) 
+        resp = request.urlopen(req)
+    except Exception as em:
+        print("EXCEPTION: " + str(em))
+
+def lambda_handler(event, context):
+    HOOK_URL = os.environ['HOOK_URL'],
+    ec2 = boto3.resource('ec2', region_name=os.environ['SOURCE_REGION'])
+    all_running_instances = [i for i in ec2.instances.filter(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])]
+    instances = [i for i in ec2.instances.filter(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}, {'Name':'tag:Name', 'Values':['bamboo']}])]
+#    for instance in instances:
+#        print("bamboo instances: " + instance.id)
+#    print("Running instance with tag : %s" % instance.id)
+    instances_to_check = [to_check for to_check in all_running_instances if to_check.id not in [i.id for i in instances]]
+
+    for instance in instances_to_check:
+        client = boto3.client('ssm', region_name=os.environ['SOURCE_REGION'])
+        response = client.describe_instance_associations_status(InstanceId = instance.id)
+#        print (response)
+        id = instance.id
+#        if "Success" + "Online" + "Compliant" not in response: print("SSM agent is not installed on this instance:  " + id)
+        if "Online" in response: print("SSM agent  installed on this instance:  " + id)
+if __name__ == '__main__':
+    lambda_handler(None, None)
