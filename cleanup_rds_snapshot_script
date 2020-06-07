@@ -1,0 +1,61 @@
+import json
+import boto3
+import os
+from datetime import datetime,timedelta, tzinfo
+
+class Zone(tzinfo):
+    def __init__(self,offset,isdst,name):
+        self.offset = offset
+        self.isdst = isdst
+        self.name = name
+    def utcoffset(self, dt):
+        return timedelta(hours=self.offset) + self.dst(dt)
+    def dst(self, dt):
+        return timedelta(hours=1) if self.isdst else timedelta(0)
+    def tzname(self,dt):
+        return self.name
+
+UTC = Zone(10,False,'UTC')
+
+# Setting retention period of 6 days
+retentionDate = datetime.now(UTC) - timedelta(days=50)
+# def delete_snapshot(snapshot_id, reg):
+#     print("Deleting snapshot " + str(snapshot_id))
+#     ec2resource = boto3.resource('ec2', region_name=reg)
+#     snapshot = ec2resource.Snapshot(snapshot_id)
+#     snapshot.delete()
+def Search_Delete_DBSnapshots(RegionName,DBidentifier,account_id):
+    
+    # # Get current timestamp in UTC
+    # now = datetime.now()
+    # # Define retention period in days
+    # retention_days = 60
+    
+    rds = boto3.client('rds')
+    ec2 = boto3.client('ec2')
+    
+    # regions = ec2.describe_regions().get('Regions',[])
+#    reg=os.environ['RegionName']
+        
+    rds = boto3.setup_default_session(region_name='us-east-1')
+    client = boto3.client('rds')
+    snapshots = client.describe_db_snapshots(SnapshotType='manual', DBInstanceIdentifier=os.environ['DBidentifier'],)
+    print('Deleting all DB Snapshots older than %s' % retentionDate)
+
+    for i in snapshots['DBSnapshots']:
+        if (i['SnapshotCreateTime'] < retentionDate):
+            print ('Deleting snapshot %s' % i['DBSnapshotIdentifier'])
+            client.delete_db_snapshot(DBSnapshotIdentifier=i['DBSnapshotIdentifier']
+        )
+
+def lambda_handler(event, context):
+    
+    account_id = os.environ['account_id'],
+    RegionName = os.environ['RegionName'],
+    DBidentifier = os.environ['DBidentifier'],
+    
+    Search_Delete_DBSnapshots(RegionName,DBidentifier,account_id) 
+    
+    
+if __name__ == '__main__':
+    lambda_handler(None, None)
