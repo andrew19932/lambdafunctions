@@ -1,0 +1,46 @@
+import json
+import boto3
+import logging
+import os
+import datetime
+
+# Posting to a Slack channel
+def send_message_to_slack(volume_id, reg):
+    from urllib import request, parse
+    import json
+    
+    text = "Unattached Volume ID (gpo-ps-devops ac): " + volume_id + " from region " + reg
+ 
+    post = {"text": "{0}".format(text)}
+ 
+    try:
+        json_data = json.dumps(post)
+        req = request.Request(os.environ['HOOK_URL'],
+                              data=json_data.encode('ascii'),
+                              headers={'Content-Type': 'application/json'}) 
+        resp = request.urlopen(req)
+    except Exception as em:
+        print("EXCEPTION: " + str(em))
+ 
+def lambda_handler(event, context):
+    
+    HOOK_URL = os.environ['HOOK_URL'],
+    
+    ec2 = boto3.client('ec2')
+    regions = ec2.describe_regions().get('Regions',[])
+    
+    for region in regions:
+        print("Checking region %s and Search Volume on Status Alailable:" % region['RegionName'])
+        reg=region['RegionName']
+        client = boto3.client('ec2', region_name=reg)
+        
+        result = client.describe_volumes(Filters=[{'Name': 'status','Values': ['available',]},],)
+        
+        
+        for volume in result['Volumes']:
+            print("Volume ID: " + volume['VolumeId'])
+            
+            volume_id = volume['VolumeId'] 
+        
+            if volume['VolumeId'] > ' ':
+                send_message_to_slack(volume_id, reg)
