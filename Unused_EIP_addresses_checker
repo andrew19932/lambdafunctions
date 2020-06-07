@@ -1,0 +1,53 @@
+import json
+import boto3
+import logging
+import os
+import datetime
+
+def send_message_to_slack(eip,reg):
+    from urllib import request, parse
+    import json
+    text = "Unused Elastic IP in (your account) ac is: " + eip + " from region " + reg
+    post = {"text": "{0}".format(text)}
+    try:
+        json_data = json.dumps(post)
+        req = request.Request(os.environ['HOOK_URL'],
+                              data=json_data.encode('ascii'),
+                              headers={'Content-Type': 'application/json'}) 
+        resp = request.urlopen(req)
+    except Exception as em:
+        print("EXCEPTION: " + str(em))
+        
+def lambda_handler(event, context):
+#    client_ireland = boto3.client('ec2', region_name=os.environ['SOURCE_REGION'])
+    # client = ec2.describe_addresses().get('Addresses',[])
+    # addresses_dict = client_ireland.describe_addresses()
+    # for eip_dict in addresses_dict['Addresses']:
+    #      if "InstanceId" not in eip_dict: 
+    #          print("Ireland unused_elastic_ip's are:  " + eip_dict['PublicIp'])
+    #     client_frankfurt = boto3.client('ec2', region_name=os.environ['REGION_FRANKFURT'])
+    #     addresses_dict_frankfurt = client_frankfurt.describe_addresses()
+    #     for eip_dict_frank in addresses_dict_frankfurt['Addresses']:
+    #          if "InstanceId" not in eip_dict_frank: 
+    #              print("Frankfurt unused_elastic_ip's are:  " + eip_dict_frank['PublicIp'])
+    HOOK_URL = os.environ['HOOK_URL'],
+    ec2 = boto3.client('ec2')
+    regions = ec2.describe_regions().get('Regions',[])
+    
+    for region in regions:
+        print("Checking region %s and Search unused elastic ip:" % region['RegionName'])
+        reg=region['RegionName']
+        client = boto3.client('ec2', region_name=reg)
+        result = client.describe_addresses()
+        
+        for eip_dict in result['Addresses']:
+            if "NetworkInterfaceId" not in eip_dict: print("Unused elastic IP: " + eip_dict['PublicIp'])
+            
+            eip = eip_dict['PublicIp']
+#            if "NetworkInterfaceId" not in eip_dict:
+            if "InstanceId" not in eip_dict:
+#                print("list of ip's are unused" + eip)
+                send_message_to_slack(eip, reg)
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
