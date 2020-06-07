@@ -1,0 +1,55 @@
+import boto3
+import collections
+import operator
+import time
+import datetime
+import os
+import json
+import argparse
+#from datetime import datetime
+
+def sent_message(HOOK_URL, filtered_values):
+    from urllib import request, parse
+    import json
+    text = "Reservation Utilization(%) for reserved instances(gpo-ps-devops) is bellow 100%. Current value is: " + filtered_values 
+    post = {"text": "{0}".format(text)}
+ 
+    try:
+        json_data = json.dumps(post)
+        req = request.Request(os.environ['HOOK_URL'],
+                              data=json_data.encode('ascii'),
+                              headers={'Content-Type': 'application/json'}) 
+        resp = request.urlopen(req)
+    except Exception as em:
+        print("EXCEPTION: " + str(em))
+        
+def check_utilization_status(SOURCE_REGION, HOOK_URL):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--days', type=int, default=3)
+    args = parser.parse_args()
+    now = datetime.datetime.utcnow()
+    start = (now - datetime.timedelta(days=args.days)).strftime('%Y-%m-%d')
+    end = now.strftime('%Y-%m-%d')
+    print ('Start period:   ' + start)
+    print ('End period:     ' + end)
+    
+    cost_client = boto3.client('ce', region_name=os.environ['SOURCE_REGION'])
+    response = cost_client.get_reservation_utilization(
+        TimePeriod={'Start': start,'End': end},
+                    Granularity='DAILY',
+        Filter = {'Dimensions':{'Key':'SERVICE', 'Values':['Amazon Elastic Compute Cloud - Compute']}}
+    )
+    filtered_values = list(response['Total'].values())[0]
+    value_float = float(filtered_values)
+    
+    print('Reservation Utilization(%) for reserved instances is : ' + filtered_values)
+    if value_float < 100: sent_message(HOOK_URL, filtered_values)
+    else: print ('message to slack was not send, values are in normal limit')
+    
+def lambda_handler(event, context):
+    SOURCE_REGION = os.environ['SOURCE_REGION'],
+    HOOK_URL = os.environ['HOOK_URL'],
+    check_utilization_status(SOURCE_REGION, HOOK_URL)
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
