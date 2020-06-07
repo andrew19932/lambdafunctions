@@ -1,0 +1,68 @@
+import time
+import boto3
+import paramiko
+import requests
+from requests.exceptions import HTTPError
+import json
+import utils
+import os
+import logging
+    # instances = ec2Resource.instances.all()
+    # for instance in instances:
+    #     # print("inst.public_ip_address",inst.public_ip_address)
+    #     if instance.private_ip_address:
+    #         print("Instance ID: ", instance.id, " , Private IP: ", instance.private_ip_address)
+    #
+    #         for url in ['http://' + instance.private_ip_address + ':9100/']:
+    #             try:
+    #                 response = requests.get(url)
+    #
+    #                 # If the response was successful, no Exception will be raised
+    #                 response.raise_for_status()
+    #             except HTTPError as http_err:
+    #                 print(f'HTTP error occurred. Node_Exporter not install')  # Python 3.6
+    #             except Exception as err:
+    #                 print(f'HTTP error occurred. Node_Exporter not install')
+    #                 send_ssh_commands(instance.id) # Python 3.6
+    #             else:
+    #                 print('Node_Exporter install')
+
+def mainFunction(event):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.info("Received event: " + json.dumps(event, sort_keys=True))
+    RegionName = os.environ['SOURCE_REGION']
+    ec2Resource = boto3.resource('ec2', region_name=RegionName)
+    sn_arn=event["detail"]["instance-id"]
+    instance_id = event["detail"]["instance-id"]
+    print (instance_id)
+    instance = instance_id.split()
+    ec2 = boto3.resource('ec2', region_name=RegionName)
+    response = ec2.instances.filter(InstanceIds=instance)
+    for instance in response: print(instance.private_ip_address)
+    print(
+        "-----------Instance from region: " + RegionName + "----on which will be installed agent-------" + instance_id)
+    time.sleep(10)
+    print("----------------------------------------------------")
+    time.sleep(350)
+    s3_client = boto3.client('s3')
+    s3_client.download_file('monitoring-bucket-prom', 'ireland-prod.pem','/tmp/ireland-prod.pem')
+
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    privkey = paramiko.RSAKey.from_private_key_file('/tmp/ireland-prod.pem')
+    target_host = instance.private_ip_address
+    ssh.connect(hostname = target_host, username='ubuntu', pkey=privkey)
+    stdin, stdout, stderr = ssh.exec_command('link_to_bucket_with_agent_script_node-exporter-install.sh; chmod +x node-exporter-install.sh; sudo ./node-exporter-install.sh && sudo rm node_exporter-0.18.0.linux-amd64.tar.gz')
+    stdin.flush()
+    data = stdout.read().splitlines()
+    for line in data:
+        print(line)
+    print("----------------------------------------------------")
+    print('Node_Exporter install with help Lambda')
+
+    ssh.close()
+
+def lambda_handler(event, context):
+    mainFunction(event)
