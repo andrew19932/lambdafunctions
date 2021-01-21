@@ -1,0 +1,114 @@
+import boto3
+import base64
+import json
+import requests
+# from botocore.exceptions import ClientError
+import os
+
+def sent_message(HOOK_URL, response_data):
+    from urllib import request, parse
+    import json
+    text = "Amount of bitbucket nodes in cluster is : " + str(response_data) 
+    post = {"text": "{0}".format(text)}
+ 
+    try:
+        json_data = json.dumps(post)
+        req = request.Request(os.environ['HOOK_URL'],
+                              data=json_data.encode('ascii'),
+                              headers={'Content-Type': 'application/json'}) 
+        resp = request.urlopen(req)
+    except Exception as em:
+        print("EXCEPTION: " + str(em))
+
+def get_secret():
+
+    secret_name = "CredsforCanaries"
+    region_name = "eu-west-1"
+    # region_name = SOURCE_REGION
+
+    # Create a Secrets Manager client
+    session = boto3.session.Session()
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name
+    )
+
+    print(client.get_secret_value(
+            SecretId=secret_name
+        )) 
+    try:
+        get_secret_value_response = client.get_secret_value(
+            SecretId=secret_name
+        )
+        # print(get_secret_value_response)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'DecryptionFailureException':
+            raise e
+        elif e.response['Error']['Code'] == 'InternalServiceErrorException':
+            raise e
+        elif e.response['Error']['Code'] == 'InvalidParameterException':
+            raise e
+        elif e.response['Error']['Code'] == 'InvalidRequestException':
+            raise e
+        elif e.response['Error']['Code'] == 'ResourceNotFoundException':
+            raise e
+    else:
+        if 'SecretString' in get_secret_value_response:
+            # print( get_secret_value_response['SecretString'])
+            return get_secret_value_response['SecretString']
+        else:
+            # decoded_binary_secret = base64.b64decode(get_secret_value_response['SecretBinary'])
+            return base64.b64decode(get_secret_value_response['SecretBinary'])
+            
+def bitbucket_login(SOURCE_REGION, HOOK_URL):
+    
+    cloudwatch = boto3.client('cloudwatch')
+    url = 'https://bitbucket.wolterskluwer.io/rest/api/1.0/admin/cluster'
+    headers = {'Content-Type': 'application/json'}
+    secret = get_secret()
+    parsed = json.loads(secret);
+    # print()
+    r = requests.get(url, auth=(parsed['j_username'], parsed['j_password']), headers=headers)
+    print(r.status_code)
+    print(r.text)
+    parsed_string = json.loads(r.text)
+    print("Pasrsed json:    ")
+    print(parsed_string)
+    response_data = len(parsed_string['nodes'])
+    print ("number of bitbucket nodes is : ")
+    print(response_data)
+    put_metric = cloudwatch.put_metric_data(
+    MetricData = [
+        {
+            'MetricName': 'Bitbucket_cluster_nodes',
+            'Dimensions': [
+                {
+                    'Name': 'Bibucket',
+                    'Value': 'nodes_count'
+                },
+                {
+                    'Name': 'VERSION',
+                    'Value': '1.0'
+                },
+            ],
+            'Unit': 'None',
+            'Value': response_data
+        },
+        # Namespace = 'Bitbucket'
+
+    ],
+    Namespace='Bitbucket'
+    )
+    print (put_metric)
+    print('Amount of bitbucket nodes in cluster is : ' + str(response_data))
+    if response_data < 2: sent_message(HOOK_URL, response_data)
+    else: print ('message to slack was not send, values are in normal limit')
+        
+def lambda_handler(event, context):
+    
+    SOURCE_REGION = os.environ['SOURCE_REGION'],
+    HOOK_URL = os.environ['HOOK_URL'],
+    bitbucket_login(SOURCE_REGION, HOOK_URL)
+    
+if __name__ == '__main__':
+    lambda_handler(None, None)
