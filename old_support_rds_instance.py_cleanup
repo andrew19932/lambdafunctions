@@ -1,0 +1,99 @@
+import time
+import datetime
+import boto3
+import os
+from botocore.exceptions import ClientError
+from array import *
+from datetime import datetime,timedelta, tzinfo
+
+class Zone(tzinfo):
+    def __init__(self,offset,isdst,name):
+        self.offset = offset
+        self.isdst = isdst
+        self.name = name
+    def utcoffset(self, dt):
+        return timedelta(hours=self.offset) + self.dst(dt)
+    def dst(self, dt):
+        return timedelta(hours=1) if self.isdst else timedelta(0)
+    def tzname(self,dt):
+        return self.name
+
+UTC = Zone(10,False,'UTC')
+
+# Setting retention period of 7 days
+retentionDate = datetime.now(UTC) - timedelta(days=7)
+
+def cleanup_old_support_db_intance():
+#   stop Old instances ()
+    client = boto3.client('rds',region_name='us-east-1')
+    instances = client.describe_db_instances()
+    collection = instances['DBInstances']
+    results = []
+    for i in collection:
+        for tag in i['TagList']:
+            if tag['Key'] == 'env' and tag['Value'] == 'support':
+                results.append(i)
+    # to_list_filtered = ( ", ".join( repr(e) for e in results ) )
+    filtered_intances_list = {'DBInstances': results}
+    print("FILTERED LIST:     ") 
+    print(filtered_intances_list)
+    print('Deleting RDS instance in Virginia older than %s' % retentionDate)
+    for instance in filtered_intances_list['DBInstances']:
+        if (instance['InstanceCreateTime'] <= retentionDate):
+            print ('Deleting instance:   %s' % instance['DBInstanceIdentifier'])
+            client.delete_db_instance(DBInstanceIdentifier=instance['DBInstanceIdentifier'], SkipFinalSnapshot=True)
+        if (instance['InstanceCreateTime'] >= retentionDate):
+            print('There is no old instances   %s' % instance['DBInstanceIdentifier'])
+
+# def update_route53_record_for_stage():
+    
+#     rds_client = boto3.client('rds',region_name='us-east-1')
+#     route53_client = boto3.client('route53')
+#     rds_instances = rds_client.describe_db_instances()
+#     rds_collection = rds_instances['DBInstances']
+#     rds_results = []
+#     for i in rds_collection:
+#         for tag in i['TagList']:
+#             if tag['Key'] == 'env' and tag['Value'] == 'support':
+#                 rds_results.append(i)
+#     # to_list_filtered = ( ", ".join( repr(e) for e in results ) )
+#     filtered_rds_intances_list = {'DBInstances': rds_results}
+#     # print("FILTERED LIST:     ") 
+#     # print(filtered_rds_intances_list)
+#     # available = [i['DBInstanceIdentifier'] for i in filtered_intances_list['DBInstances'] if i['DBInstanceStatus'] == 'available']
+#     # print(available)
+#     for instance in filtered_rds_intances_list['DBInstances']:
+#         if (instance['InstanceCreateTime'] >= retentionDate):
+#             rds_host = filtered_rds_intances_list.get('DBInstances')[0].get('Endpoint').get('Address')
+#             print(rds_host)
+#             print("Updating record")
+#             response = route53_client.change_resource_record_sets(
+#             HostedZoneId='Z3CL25SR8S50QQ',
+#             ChangeBatch={
+#                 'Comment': 'Automatic db-stage.2book.com DNS update',
+#                 'Changes': [
+#                     {
+#                         'Action': 'UPSERT',
+#                         'ResourceRecordSet': {
+#                             'Name': 'db-stage.2book.com',
+#                             'Type': 'CNAME',
+#                             'TTL': 300,
+#                             'ResourceRecords': [
+#                                 {
+#                                     'Value': rds_host
+#                                 },
+#                             ],
+#                         }
+#                     },
+#                 ]
+#                 }
+#             )
+#             print("NEW Value for db-stage.2book.com:    " + rds_host)
+
+def lambda_handler(event, context):
+    
+    cleanup_old_support_db_intance(),
+    # update_route53_record_for_stage()
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
