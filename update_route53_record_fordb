@@ -45,7 +45,7 @@ def update_route53_record_for_stage():
             response_stage = route53_client.change_resource_record_sets(
             HostedZoneId='Z3CL25SR8S50QQ',
             ChangeBatch={
-                'Comment': 'Automatic db-stage.2book.com DNS update',
+                'Comment': 'Automatic db-stage DNS update',
                 'Changes': [
                     {
                         'Action': 'UPSERT',
