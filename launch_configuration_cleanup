@@ -1,0 +1,46 @@
+import time
+import datetime
+import boto3
+import os
+from botocore.exceptions import ClientError
+from array import *
+from datetime import datetime,timedelta, tzinfo
+
+class Zone(tzinfo):
+    def __init__(self,offset,isdst,name):
+        self.offset = offset
+        self.isdst = isdst
+        self.name = name
+    def utcoffset(self, dt):
+        return timedelta(hours=self.offset) + self.dst(dt)
+    def dst(self, dt):
+        return timedelta(hours=1) if self.isdst else timedelta(0)
+    def tzname(self,dt):
+        return self.name
+
+UTC = Zone(10,False,'UTC')
+
+# Setting retention period of 365 days
+retentionDate = datetime.now(UTC) - timedelta(days=365)
+
+def cleanup_old_launch_configurations():
+
+    client = boto3.client('autoscaling', region_name='us-east-1')
+    lc = client.describe_launch_configurations()
+    collection = lc['LaunchConfigurations']
+    
+    for instance in collection:
+        if (instance['CreatedTime'] <= retentionDate):
+            print ('Deleting launch configurations:   %s' % instance['LaunchConfigurationName'])
+            try: client.delete_launch_configuration(LaunchConfigurationName=instance['LaunchConfigurationName'],)
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ResourceInUse': print("LC is in use")
+                else: print("Unexpected error: %s" % e)
+
+
+def lambda_handler(event, context):
+    
+    cleanup_old_launch_configurations()
+
+if __name__ == '__main__':
+    lambda_handler(None, None)
